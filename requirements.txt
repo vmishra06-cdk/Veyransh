@@ -2,7 +2,6 @@ flask
 scikit-learn
 matplotlib
 numpy
-pandas
 qrcode
 pillow
 gunicorn
