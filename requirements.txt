@@ -1,0 +1,13 @@
+flask
+scikit-learn
+matplotlib
+numpy
+pandas
+pillow
+pytesseract
+pdf2image
+customtkinter
+requests
+opencv-python
+qrcode
+gunicorn
