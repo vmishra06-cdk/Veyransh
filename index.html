@@ -1,1536 +1,402 @@
+from flask import Flask, request, jsonify, send_file, render_template_string
+import datetime
+import io
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
+import os
+
+app = Flask(__name__)
+
+# ==========================================
+# 1. CORE ARCHITECTURE (In-Memory Storage)
+# ==========================================
+
+# In a real app, these would be in a database (SQL/NoSQL)
+USER_DATA = {
+    "deadlines": [
+        {"task": "Compiler Design Project", "date": "2026-04-10", "priority": "Urgent"},
+        {"task": "LeetCode 50 Days Challenge", "date": "2026-05-01", "priority": "High"}
+    ],
+    "resources": [
+        {"name": "My Repo", "url": "https://github.com/", "icon": "fa-github"},
+        {"name": "LeetCode", "url": "https://leetcode.com/", "icon": "fa-code"}
+    ],
+    "tasks": [],
+    "performance": [75, 82, 80, 85, 90] # Points for Graph
+}
+
+# VIT Inspired Grade Mapping
+GRADE_POINTS = {"S": 10, "A": 9, "B": 8, "C": 7, "D": 6, "E": 5, "F": 0}
+
+# ==========================================
+# 2. UI ENGINE (Tailwind + Custom CSS)
+# ==========================================
+
+HTML_UI = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CS_OS v2 — Developer Workspace</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-<style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg:        #06070a;
-  --bg2:       #0c0e14;
-  --bg3:       #12141c;
-  --bg4:       #181b24;
-  --border:    rgba(255,255,255,0.055);
-  --border2:   rgba(255,255,255,0.10);
-  --border3:   rgba(255,255,255,0.16);
-  --text:      #d8dce8;
-  --text2:     #7a8099;
-  --text3:     #454860;
-  --cyan:      #00d4ff;
-  --cyan-dim:  rgba(0,212,255,0.12);
-  --cyan-glow: rgba(0,212,255,0.25);
-  --amber:     #f0a020;
-  --amber-dim: rgba(240,160,32,0.12);
-  --red:       #ff5060;
-  --red-dim:   rgba(255,80,96,0.12);
-  --green:     #3ddc84;
-  --green-dim: rgba(61,220,132,0.10);
-  --purple:    #b48eff;
-  --mono:      'IBM Plex Mono', monospace;
-  --sans:      'Outfit', sans-serif;
-  --radius:    10px;
-  --radius-lg: 16px;
-  --nav-w:     56px;
-  --right-w:   320px;
-}
-html { height: 100%; }
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 12.5px;
-  height: 100%;
-  overflow: hidden;
-  cursor: default;
-}
- 
-/* ─── SCROLLBARS ─────────────────────────── */
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
- 
-/* ─── GRID BG ────────────────────────────── */
-.grid-bg {
-  position: fixed; inset: 0; pointer-events: none; z-index: 0;
-  background-image:
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border) 1px, transparent 1px);
-  background-size: 40px 40px;
-  mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 100%);
-  opacity: 0.5;
-}
-.glow-orb {
-  position: fixed; pointer-events: none; border-radius: 50%; z-index: 0;
-  filter: blur(120px); opacity: 0.08;
-}
-.orb1 { width: 600px; height: 600px; background: var(--cyan); top: -200px; left: 200px; }
-.orb2 { width: 400px; height: 400px; background: var(--purple); bottom: -100px; right: 100px; }
- 
-/* ─── SHELL ──────────────────────────────── */
-.shell {
-  position: relative; z-index: 1;
-  display: grid;
-  grid-template-columns: var(--nav-w) 1fr var(--right-w);
-  grid-template-rows: 48px 1fr 26px;
-  height: 100vh;
-}
- 
-/* ─── TOPBAR ─────────────────────────────── */
-.topbar {
-  grid-column: 1 / -1;
-  display: flex; align-items: center;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-  padding: 0 16px 0 0;
-  gap: 0;
-  user-select: none;
-}
-.topbar-logo {
-  width: var(--nav-w); height: 48px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  border-right: 1px solid var(--border);
-}
-.logo-hex {
-  width: 28px; height: 28px;
-  background: var(--cyan);
-  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--sans); font-weight: 900; font-size: 11px; color: var(--bg);
-}
-.topbar-tabs {
-  display: flex; align-items: stretch; height: 100%;
-  border-right: 1px solid var(--border); flex-shrink: 0;
-}
-.topbar-tab {
-  display: flex; align-items: center; gap: 7px;
-  padding: 0 18px; cursor: pointer; font-size: 12px;
-  color: var(--text2); border-right: 1px solid var(--border);
-  transition: all 0.15s; position: relative; white-space: nowrap;
-}
-.topbar-tab:hover { color: var(--text); background: var(--bg3); }
-.topbar-tab.active { color: var(--cyan); background: rgba(0,212,255,0.04); }
-.topbar-tab.active::after {
-  content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
-  background: var(--cyan);
-}
-.topbar-tab i { font-size: 11px; }
-.topbar-spacer { flex: 1; }
-.topbar-right { display: flex; align-items: center; gap: 10px; }
-#topbar-clock {
-  font-size: 12px; color: var(--cyan); letter-spacing: 0.5px;
-  font-variant-numeric: tabular-nums; opacity: 0.9;
-}
-.topbar-pill {
-  font-size: 10px; padding: 3px 9px; border-radius: 20px;
-  font-family: var(--mono); letter-spacing: 0.3px;
-}
-.pill-online { background: var(--green-dim); color: var(--green); border: 1px solid rgba(61,220,132,0.2); }
-.tbar-btn {
-  width: 30px; height: 30px; border-radius: 8px;
-  background: transparent; border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; color: var(--text2); font-size: 12px;
-  transition: all 0.15s;
-}
-.tbar-btn:hover { background: var(--bg3); color: var(--text); border-color: var(--border2); }
- 
-/* ─── LEFT NAV ───────────────────────────── */
-.nav-left {
-  background: var(--bg2);
-  border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; align-items: center;
-  padding: 10px 0; gap: 4px;
-  overflow: hidden;
-}
-.nav-icon {
-  width: 38px; height: 38px; border-radius: var(--radius);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; color: var(--text3); font-size: 15px;
-  transition: all 0.15s; position: relative;
-}
-.nav-icon:hover { color: var(--text); background: var(--bg3); }
-.nav-icon.active { color: var(--cyan); background: var(--cyan-dim); }
-.nav-icon .nav-tip {
-  position: absolute; left: calc(100% + 10px);
-  background: var(--bg4); border: 1px solid var(--border2);
-  color: var(--text); font-size: 11px; padding: 4px 10px; border-radius: 6px;
-  white-space: nowrap; pointer-events: none; opacity: 0;
-  transition: opacity 0.15s; z-index: 100;
-}
-.nav-icon:hover .nav-tip { opacity: 1; }
-.nav-sep { width: 24px; height: 1px; background: var(--border); margin: 4px 0; }
- 
-/* ─── MAIN ───────────────────────────────── */
-.main {
-  overflow: hidden; display: flex; flex-direction: column;
-  background: var(--bg);
-}
-.panel { display: none; flex: 1; overflow-y: auto; padding: 22px 24px; flex-direction: column; gap: 18px; }
-.panel.active { display: flex; animation: panelIn 0.2s ease; }
-@keyframes panelIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
- 
-/* ─── RIGHT SIDEBAR ──────────────────────── */
-.sidebar-right {
-  background: var(--bg2);
-  border-left: 1px solid var(--border);
-  display: flex; flex-direction: column;
-  overflow: hidden;
-}
- 
-/* ─── STATUS BAR ─────────────────────────── */
-.statusbar {
-  grid-column: 1 / -1;
-  display: flex; align-items: center;
-  background: var(--cyan); color: var(--bg);
-  padding: 0 12px; gap: 16px; font-size: 11px; font-weight: 500;
-}
-.statusbar-right { margin-left: auto; display: flex; gap: 14px; }
-.sb-item { display: flex; align-items: center; gap: 5px; opacity: 0.8; }
-.sb-item i { font-size: 10px; }
- 
-/* ─── CARDS ──────────────────────────────── */
-.card {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 18px 20px;
-  transition: border-color 0.2s;
-  position: relative;
-  overflow: hidden;
-}
-.card::before {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(135deg, rgba(255,255,255,0.012) 0%, transparent 60%);
-  pointer-events: none; border-radius: inherit;
-}
-.card:hover { border-color: var(--border2); }
-.card.glow:hover { border-color: rgba(0,212,255,0.25); box-shadow: 0 0 30px rgba(0,212,255,0.05); }
- 
-.card-head {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 14px;
-}
-.card-title {
-  font-family: var(--sans); font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 1px; color: var(--text2);
-  display: flex; align-items: center; gap: 7px;
-}
-.card-title i { font-size: 12px; }
- 
-/* ─── STATS GRID ─────────────────────────── */
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.stat {
-  background: var(--bg3); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 14px 16px;
-  position: relative; overflow: hidden; transition: all 0.2s;
-}
-.stat:hover { border-color: var(--border2); transform: translateY(-1px); }
-.stat-icon {
-  font-size: 18px; margin-bottom: 8px;
-  display: inline-block;
-}
-.stat-num {
-  font-family: var(--sans); font-size: 28px; font-weight: 800;
-  line-height: 1; letter-spacing: -1px;
-}
-.stat-lbl { font-size: 10px; color: var(--text2); margin-top: 3px; letter-spacing: 0.5px; text-transform: uppercase; }
-.stat-bar { height: 2px; background: var(--border); border-radius: 2px; margin-top: 10px; overflow: hidden; }
-.stat-bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
- 
-/* ─── GRID LAYOUTS ───────────────────────── */
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
-.grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
- 
-/* ─── FORM ELEMENTS ──────────────────────── */
-input, select, textarea {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  color: var(--text); border-radius: var(--radius);
-  padding: 8px 12px; font-family: var(--mono); font-size: 12px;
-  outline: none; width: 100%; transition: border-color 0.15s;
-}
-input::placeholder, textarea::placeholder { color: var(--text3); }
-input:focus, select:focus, textarea:focus { border-color: rgba(0,212,255,0.35); }
-select option { background: var(--bg3); }
-textarea { resize: vertical; min-height: 70px; }
- 
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field label {
-  font-size: 10px; color: var(--text2); letter-spacing: 0.8px;
-  text-transform: uppercase; font-weight: 500;
-}
-.row { display: flex; gap: 8px; }
-.row input, .row select { flex: 1; min-width: 0; }
- 
-/* ─── BUTTONS ────────────────────────────── */
-.btn {
-  cursor: pointer; border: none; border-radius: var(--radius);
-  font-family: var(--mono); font-size: 11px; font-weight: 500;
-  letter-spacing: 0.3px; padding: 9px 16px; transition: all 0.15s;
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-}
-.btn-cyan { background: var(--cyan); color: var(--bg); font-weight: 600; }
-.btn-cyan:hover { background: #20e0ff; transform: translateY(-1px); }
-.btn-ghost {
-  background: var(--bg3); color: var(--text2);
-  border: 1px solid var(--border);
-}
-.btn-ghost:hover { color: var(--text); border-color: var(--border2); background: var(--bg4); }
-.btn-danger { background: var(--red-dim); color: var(--red); border: 1px solid rgba(255,80,96,0.2); }
-.btn-danger:hover { background: rgba(255,80,96,0.2); }
-.btn-sm { padding: 5px 11px; font-size: 10px; }
-.btn-full { width: 100%; }
-.btn-icon { width: 32px; height: 32px; padding: 0; border-radius: var(--radius); flex-shrink: 0; }
- 
-/* ─── TAGS ───────────────────────────────── */
-.tag {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 3px 9px; border-radius: 20px; font-size: 10px; font-weight: 500;
-  letter-spacing: 0.3px; white-space: nowrap;
-}
-.tag-red   { background: var(--red-dim);   color: var(--red);    border: 1px solid rgba(255,80,96,0.2); }
-.tag-amber { background: var(--amber-dim); color: var(--amber);  border: 1px solid rgba(240,160,32,0.2); }
-.tag-cyan  { background: var(--cyan-dim);  color: var(--cyan);   border: 1px solid rgba(0,212,255,0.2); }
-.tag-green { background: var(--green-dim); color: var(--green);  border: 1px solid rgba(61,220,132,0.2); }
-.tag-purple{ background: rgba(180,142,255,0.12); color: var(--purple); border: 1px solid rgba(180,142,255,0.2); }
- 
-/* ─── TASKS ──────────────────────────────── */
-.task-item {
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 10px 12px; border-radius: var(--radius);
-  background: var(--bg3); border: 1px solid var(--border);
-  margin-bottom: 6px; transition: all 0.15s;
-  animation: itemIn 0.2s ease;
-}
-.task-item:hover { border-color: var(--border2); }
-.task-item.done { opacity: 0.4; }
-.task-item.done .task-text { text-decoration: line-through; color: var(--text2); }
-.task-check {
-  width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0;
-  border: 1.5px solid var(--text3); cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s; margin-top: 1px;
-}
-.task-check:hover { border-color: var(--cyan); }
-.task-check.on { background: var(--cyan); border-color: var(--cyan); }
-.task-check.on::after { content: '✓'; color: var(--bg); font-size: 10px; font-weight: 700; }
-.task-body { flex: 1; min-width: 0; }
-.task-text { font-size: 12.5px; line-height: 1.4; word-break: break-word; }
-.task-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
-.task-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; }
-.task-item:hover .task-actions { opacity: 1; }
-.tiny-btn {
-  background: none; border: none; cursor: pointer;
-  color: var(--text3); font-size: 11px; padding: 3px 5px;
-  border-radius: 5px; transition: all 0.15s;
-}
-.tiny-btn:hover { color: var(--red); background: var(--red-dim); }
- 
-/* ─── DEADLINES ──────────────────────────── */
-.dl-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 11px 14px; border-radius: var(--radius);
-  background: var(--bg3); border: 1px solid var(--border);
-  margin-bottom: 7px; animation: itemIn 0.2s ease;
-  transition: all 0.15s;
-}
-.dl-item:hover { border-color: var(--border2); }
-.dl-left { flex: 1; min-width: 0; }
-.dl-name { font-size: 13px; font-weight: 500; font-family: var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dl-date { font-size: 10.5px; color: var(--text2); margin-top: 3px; }
-.dl-prog { height: 2px; background: var(--border); border-radius: 2px; margin-top: 6px; overflow: hidden; }
-.dl-prog-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
-.dl-del { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 12px; padding: 4px; border-radius: 5px; transition: all 0.15s; }
-.dl-del:hover { color: var(--red); }
- 
-/* ─── SNIPPETS ───────────────────────────── */
-.snippet-item {
-  background: var(--bg3); border: 1px solid var(--border);
-  border-radius: var(--radius); margin-bottom: 10px;
-  overflow: hidden; animation: itemIn 0.2s ease; transition: border-color 0.15s;
-}
-.snippet-item:hover { border-color: var(--border2); }
-.snippet-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border); cursor: pointer;
-}
-.snippet-title { flex: 1; font-size: 13px; font-weight: 500; font-family: var(--sans); }
-.snippet-body { padding: 0; max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
-.snippet-body.open { max-height: 400px; }
-pre {
-  padding: 14px; margin: 0; font-family: var(--mono); font-size: 11.5px;
-  line-height: 1.7; color: var(--text); overflow-x: auto;
-  background: var(--bg);
-}
- 
-/* ─── POMODORO ───────────────────────────── */
-.pomodoro-wrap {
-  display: flex; flex-direction: column; align-items: center;
-  padding: 10px 0 4px;
-}
-.pom-ring {
-  position: relative; width: 110px; height: 110px; margin-bottom: 12px;
-}
-.pom-svg { transform: rotate(-90deg); }
-.pom-track { fill: none; stroke: var(--bg4); stroke-width: 6; }
-.pom-fill  { fill: none; stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
-.pom-center {
-  position: absolute; inset: 0;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-}
-.pom-time { font-family: var(--sans); font-size: 22px; font-weight: 800; letter-spacing: -1px; }
-.pom-mode { font-size: 9px; color: var(--text2); letter-spacing: 1px; text-transform: uppercase; margin-top: 1px; }
-.pom-btns { display: flex; gap: 7px; }
-.pom-sessions { display: flex; gap: 5px; margin-top: 8px; }
-.pom-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: background 0.3s; }
-.pom-dot.done { background: var(--cyan); }
- 
-/* ─── SGPA ───────────────────────────────── */
-.course-row {
-  display: flex; align-items: center; gap: 7px;
-  padding: 8px 10px; background: var(--bg3);
-  border: 1px solid var(--border); border-radius: var(--radius);
-  margin-bottom: 7px; animation: itemIn 0.2s;
-}
-.course-row input { flex: 3; }
-.course-row input[type="number"] { flex: 1; text-align: center; }
-.course-row select { flex: 1.2; }
-.rm-btn { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 13px; transition: color 0.15s; }
-.rm-btn:hover { color: var(--red); }
- 
-.sgpa-box {
-  text-align: center; padding: 22px; border-radius: var(--radius);
-  background: linear-gradient(135deg, rgba(0,212,255,0.07) 0%, rgba(0,212,255,0.02) 100%);
-  border: 1px solid rgba(0,212,255,0.18); display: none; animation: itemIn 0.3s;
-}
-.sgpa-num {
-  font-family: var(--sans); font-size: 56px; font-weight: 900;
-  color: var(--cyan); letter-spacing: -3px; line-height: 1;
-}
-.sgpa-out-lbl { font-size: 11px; color: var(--text2); margin-top: 6px; letter-spacing: 0.5px; }
-.sgpa-grade-badge {
-  display: inline-block; margin-top: 10px;
-  padding: 4px 14px; border-radius: 20px; font-size: 11px;
-  background: var(--cyan-dim); color: var(--cyan);
-  border: 1px solid rgba(0,212,255,0.2);
-}
- 
-/* ─── CGPA TABLE ─────────────────────────── */
-.sem-table { width: 100%; border-collapse: collapse; }
-.sem-table th {
-  font-size: 10px; color: var(--text2); text-align: left;
-  padding: 6px 12px; border-bottom: 1px solid var(--border);
-  text-transform: uppercase; letter-spacing: 0.6px; font-weight: 500;
-}
-.sem-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
-.sem-table tr:last-child td { border: none; }
-.sem-table tr:hover td { background: var(--bg3); }
- 
-/* ─── AI PANEL ───────────────────────────── */
-.ai-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.ai-top {
-  padding: 12px 16px; border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 9px; flex-shrink: 0;
-}
-.ai-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); animation: aiPulse 2s infinite; }
-@keyframes aiPulse { 0%,100%{opacity:1;box-shadow:0 0 0 0 var(--cyan-glow);} 50%{opacity:0.6;box-shadow:0 0 0 5px transparent;} }
-.ai-label { font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--text); }
-.ai-model { font-size: 10px; color: var(--text3); margin-left: auto; }
- 
-.ai-msgs { flex: 1; overflow-y: auto; padding: 14px 14px; display: flex; flex-direction: column; gap: 10px; }
-.msg {
-  padding: 10px 13px; border-radius: 12px;
-  font-size: 12px; line-height: 1.65; max-width: 92%;
-  animation: msgIn 0.2s ease;
-}
-@keyframes msgIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
-.msg-u { background: rgba(59,127,245,0.12); border: 1px solid rgba(59,127,245,0.2); color: #b0c8ff; align-self: flex-end; }
-.msg-a { background: var(--bg3); border: 1px solid var(--border); color: var(--text); align-self: flex-start; }
-.msg-a.thinking { color: var(--text3); font-style: italic; }
- 
-.ai-chips { padding: 0 14px 10px; display: flex; flex-wrap: wrap; gap: 6px; }
-.chip {
-  font-size: 10.5px; padding: 5px 11px; border-radius: 20px;
-  background: var(--bg3); border: 1px solid var(--border);
-  cursor: pointer; color: var(--text2); transition: all 0.15s;
-}
-.chip:hover { color: var(--cyan); border-color: rgba(0,212,255,0.3); background: var(--cyan-dim); }
- 
-.ai-input-row {
-  display: flex; gap: 8px; padding: 10px 14px;
-  border-top: 1px solid var(--border); flex-shrink: 0;
-}
-.ai-input-row input { flex: 1; }
- 
-/* ─── POMODORO SIDEBAR ───────────────────── */
-.pom-panel {
-  padding: 16px; border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.pom-head { font-family: var(--sans); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text2); margin-bottom: 12px; display: flex; align-items: center; gap: 7px; }
- 
-/* ─── TERMINAL ───────────────────────────── */
-.term-panel {
-  flex-shrink: 0; height: 130px;
-  background: #020305; border-top: 1px solid var(--border);
-  display: flex; flex-direction: column; overflow: hidden;
-}
-.term-head {
-  display: flex; align-items: center; gap: 7px;
-  padding: 6px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0;
-}
-.term-dots { display: flex; gap: 5px; }
-.td { width: 10px; height: 10px; border-radius: 50%; }
-.td-r { background: #ff5f57; } .td-y { background: #ffbd2e; } .td-g { background: #28c840; }
-.term-label { font-size: 10px; color: var(--text3); letter-spacing: 0.7px; text-transform: uppercase; }
-.term-body { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column-reverse; }
-.tl { font-size: 11px; line-height: 1.65; color: #3a3e50; }
-.tl.ok { color: #28c840; } .tl.info { color: var(--cyan); }
-.tl.warn { color: var(--amber); } .tl.err { color: var(--red); }
- 
-/* ─── MODAL ──────────────────────────────── */
-.overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.75);
-  display: none; align-items: center; justify-content: center;
-  z-index: 999; backdrop-filter: blur(6px);
-}
-.overlay.on { display: flex; }
-.modal {
-  background: var(--bg2); border: 1px solid var(--border2);
-  border-radius: 18px; padding: 28px 32px; width: 400px; max-width: 94vw;
-  animation: modIn 0.2s ease;
-}
-@keyframes modIn { from { opacity: 0; transform: scale(0.95) translateY(8px); } to { opacity: 1; transform: none; } }
-.modal-title { font-family: var(--sans); font-size: 18px; font-weight: 800; margin-bottom: 22px; letter-spacing: -0.5px; }
-.modal-actions { display: flex; gap: 9px; margin-top: 22px; }
- 
-/* ─── QUOTE CARD ─────────────────────────── */
-.quote-card {
-  padding: 18px 22px; border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, var(--bg2), var(--bg3));
-  border: 1px solid var(--border); position: relative; overflow: hidden;
-}
-.quote-mark {
-  font-size: 64px; line-height: 1; color: var(--cyan); opacity: 0.12;
-  font-family: Georgia, serif; position: absolute; top: 6px; left: 14px;
-  pointer-events: none;
-}
-.quote-text { font-size: 13px; line-height: 1.7; color: var(--text); position: relative; }
-.quote-author { font-size: 11px; color: var(--text2); margin-top: 6px; position: relative; }
- 
-/* ─── RESOURCE ───────────────────────────── */
-.res-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 9px 11px; border-radius: var(--radius); cursor: pointer;
-  background: var(--bg3); border: 1px solid var(--border);
-  margin-bottom: 6px; text-decoration: none; color: var(--text);
-  font-size: 12px; transition: all 0.15s;
-}
-.res-item:hover { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
-.res-item i { font-size: 12px; color: var(--text3); flex-shrink: 0; }
-.res-item:hover i { color: var(--cyan); }
-.res-item .res-name { flex: 1; font-family: var(--sans); font-size: 12.5px; }
-.res-del { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 11px; opacity: 0; transition: opacity 0.15s; padding: 2px 4px; }
-.res-item:hover .res-del { opacity: 1; }
-.res-del:hover { color: var(--red); }
- 
-/* ─── ANIM ───────────────────────────────── */
-@keyframes itemIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
- 
-/* ─── CHART WRAP ─────────────────────────── */
-.chart-box { position: relative; height: 180px; }
- 
-/* ─── NOTICE BANNER ──────────────────────── */
-.banner {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 16px; border-radius: var(--radius);
-  font-size: 12px; border-left: 3px solid;
-}
-.banner-amber { background: var(--amber-dim); color: var(--amber); border-color: var(--amber); }
-.banner a { color: inherit; }
- 
-/* ─── SCROLLABLE AREA ────────────────────── */
-.scroll-area { overflow-y: auto; flex: 1; }
- 
-/* ─── EMPTY STATE ────────────────────────── */
-.empty { padding: 22px; text-align: center; color: var(--text3); font-size: 12px; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Veyransh CS_OS | Developer Workspace</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Inter:wght@400;700&display=swap');
+        
+        :root {
+            --bg: #050505;
+            --card: #0f0f0f;
+            --border: #1f1f1f;
+            --accent: #3b82f6;
+            --terminal: #121212;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            scroll-behavior: smooth;
+        }
+
+        .code-font { font-family: 'Fira Code', monospace; }
+
+        .glass-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .glass-card:hover { border-color: var(--accent); box-shadow: 0 0 20px rgba(59, 130, 246, 0.1); }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn-primary:hover { opacity: 0.9; transform: scale(1.02); }
+
+        .input-dark {
+            background: #161616;
+            border: 1px solid var(--border);
+            color: white;
+            padding: 10px;
+            border-radius: 8px;
+            outline: none;
+            width: 100%;
+        }
+
+        .input-dark:focus { border-color: var(--accent); }
+
+        /* CUSTOM SCROLLBAR */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+
+        /* LOGO GRID */
+        .platform-icon {
+            font-size: 24px;
+            transition: transform 0.2s;
+        }
+        .platform-icon:hover { transform: translateY(-3px); color: var(--accent); }
+    </style>
 </head>
-<body>
- 
-<!-- BG EFFECTS -->
-<div class="grid-bg"></div>
-<div class="glow-orb orb1"></div>
-<div class="glow-orb orb2"></div>
- 
-<div class="shell">
- 
-<!-- ═══ TOPBAR ════════════════════════════════════ -->
-<header class="topbar">
-  <div class="topbar-logo">
-    <div class="logo-hex">CS</div>
-  </div>
-  <div class="topbar-tabs">
-    <div class="topbar-tab active" onclick="switchTab('dashboard',this)">
-      <i class="fa-solid fa-table-cells-large"></i> Dashboard
-    </div>
-    <div class="topbar-tab" onclick="switchTab('tasks',this)">
-      <i class="fa-solid fa-list-check"></i> Tasks
-    </div>
-    <div class="topbar-tab" onclick="switchTab('sgpa',this)">
-      <i class="fa-solid fa-graduation-cap"></i> SGPA
-    </div>
-    <div class="topbar-tab" onclick="switchTab('snippets',this)">
-      <i class="fa-solid fa-code"></i> Snippets
-    </div>
-    <div class="topbar-tab" onclick="switchTab('links',this)">
-      <i class="fa-solid fa-link"></i> Links
-    </div>
-  </div>
-  <div class="topbar-spacer"></div>
-  <div class="topbar-right">
-    <span class="topbar-pill pill-online">● Online</span>
-    <span id="topbar-clock">00:00:00</span>
-    <div class="tbar-btn" title="New Deadline" onclick="openDlModal()"><i class="fa-solid fa-calendar-plus"></i></div>
-    <div class="tbar-btn" title="New Snippet" onclick="openSnipModal()"><i class="fa-solid fa-plus"></i></div>
-  </div>
-</header>
- 
-<!-- ═══ LEFT NAV ══════════════════════════════════ -->
-<nav class="nav-left">
-  <div class="nav-icon active" onclick="switchTab('dashboard',null)" id="ni-dashboard" title="">
-    <i class="fa-solid fa-house"></i>
-    <span class="nav-tip">Dashboard</span>
-  </div>
-  <div class="nav-icon" onclick="switchTab('tasks',null)" title="">
-    <i class="fa-solid fa-check-square"></i>
-    <span class="nav-tip">Tasks</span>
-  </div>
-  <div class="nav-icon" onclick="switchTab('sgpa',null)" title="">
-    <i class="fa-solid fa-chart-pie"></i>
-    <span class="nav-tip">SGPA Calc</span>
-  </div>
-  <div class="nav-icon" onclick="switchTab('snippets',null)" title="">
-    <i class="fa-solid fa-code"></i>
-    <span class="nav-tip">Snippets</span>
-  </div>
-  <div class="nav-icon" onclick="switchTab('links',null)" title="">
-    <i class="fa-solid fa-link"></i>
-    <span class="nav-tip">Links</span>
-  </div>
-  <div class="nav-sep"></div>
-  <div class="nav-icon" onclick="openDlModal()" title="">
-    <i class="fa-solid fa-flag"></i>
-    <span class="nav-tip">Add Deadline</span>
-  </div>
-</nav>
- 
-<!-- ═══ MAIN PANELS ══════════════════════════════ -->
-<main class="main">
- 
-<!-- ── DASHBOARD ───────────────────────────────── -->
-<div class="panel active" id="panel-dashboard">
- 
-  <div class="banner banner-amber">
-    <i class="fa-solid fa-fire"></i>
-    Daily LeetCode problem pending! Maintain your streak →
-    <a href="https://leetcode.com/problemset/all/" target="_blank" style="margin-left:auto;white-space:nowrap;font-weight:600;">Solve Now ↗</a>
-  </div>
- 
-  <div class="stats-grid">
-    <div class="stat" style="border-top:2px solid var(--cyan);">
-      <div class="stat-icon" style="color:var(--cyan)"><i class="fa-solid fa-list-check"></i></div>
-      <div class="stat-num" id="s-tasks" style="color:var(--cyan)">0</div>
-      <div class="stat-lbl">Total Tasks</div>
-      <div class="stat-bar"><div class="stat-bar-fill" id="sb-tasks" style="background:var(--cyan);width:0%"></div></div>
-    </div>
-    <div class="stat" style="border-top:2px solid var(--green);">
-      <div class="stat-icon" style="color:var(--green)"><i class="fa-solid fa-circle-check"></i></div>
-      <div class="stat-num" id="s-done" style="color:var(--green)">0</div>
-      <div class="stat-lbl">Completed</div>
-      <div class="stat-bar"><div class="stat-bar-fill" id="sb-done" style="background:var(--green);width:0%"></div></div>
-    </div>
-    <div class="stat" style="border-top:2px solid var(--red);">
-      <div class="stat-icon" style="color:var(--red)"><i class="fa-solid fa-calendar-xmark"></i></div>
-      <div class="stat-num" id="s-dl" style="color:var(--red)">0</div>
-      <div class="stat-lbl">Deadlines</div>
-      <div class="stat-bar"><div class="stat-bar-fill" id="sb-dl" style="background:var(--red);width:100%"></div></div>
-    </div>
-    <div class="stat" style="border-top:2px solid var(--purple);">
-      <div class="stat-icon" style="color:var(--purple)"><i class="fa-solid fa-code"></i></div>
-      <div class="stat-num" id="s-snip" style="color:var(--purple)">0</div>
-      <div class="stat-lbl">Snippets</div>
-      <div class="stat-bar"><div class="stat-bar-fill" id="sb-snip" style="background:var(--purple);width:0%"></div></div>
-    </div>
-  </div>
- 
-  <div class="grid-2-1">
-    <div class="card glow">
-      <div class="card-head">
-        <div class="card-title" style="color:var(--cyan)"><i class="fa-solid fa-chart-line"></i> Productivity Index</div>
-        <button class="btn btn-ghost btn-sm" onclick="pushChartPoint()">+ Point</button>
-      </div>
-      <div class="chart-box"><canvas id="mainChart"></canvas></div>
-    </div>
-    <div class="card" style="display:flex;flex-direction:column;">
-      <div class="card-head">
-        <div class="card-title"><i class="fa-regular fa-calendar"></i> Upcoming</div>
-      </div>
-      <div id="dash-deadlines" style="flex:1;overflow-y:auto;"></div>
-    </div>
-  </div>
- 
-  <div class="quote-card">
-    <div class="quote-mark">"</div>
-    <div class="quote-text" id="quote-text">Loading quote…</div>
-    <div class="quote-author" id="quote-author">—</div>
-  </div>
- 
-</div>
- 
-<!-- ── TASKS ─────────────────────────────────────── -->
-<div class="panel" id="panel-tasks">
-  <div class="card">
-    <div class="card-head">
-      <div class="card-title"><i class="fa-solid fa-plus-circle"></i> Add Task</div>
-    </div>
-    <div class="row">
-      <input type="text" id="task-input" placeholder="What needs to be done?" onkeydown="if(event.key==='Enter')addTask()">
-      <select id="task-cat" style="width:130px;flex-shrink:0;">
-        <option value="general">General</option>
-        <option value="dsa">DSA</option>
-        <option value="project">Project</option>
-        <option value="study">Study</option>
-        <option value="urgent">🔴 Urgent</option>
-      </select>
-      <button class="btn btn-cyan btn-icon" onclick="addTask()"><i class="fa-solid fa-plus"></i></button>
-    </div>
-  </div>
- 
-  <div class="grid-2">
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title"><i class="fa-solid fa-spinner"></i> Pending</div>
-        <span id="pending-count" class="tag tag-amber">0</span>
-      </div>
-      <div id="pending-list" style="max-height:380px;overflow-y:auto;"></div>
-      <div id="pending-empty" class="empty">No pending tasks 🎉</div>
-    </div>
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title" style="color:var(--green)"><i class="fa-solid fa-check-double"></i> Completed</div>
-        <span id="done-count" class="tag tag-green">0</span>
-      </div>
-      <div id="done-list" style="max-height:380px;overflow-y:auto;"></div>
-      <div id="done-empty" class="empty" style="color:var(--text3)">Nothing done yet</div>
-    </div>
-  </div>
-</div>
- 
-<!-- ── SGPA ──────────────────────────────────────── -->
-<div class="panel" id="panel-sgpa">
-  <div class="grid-2">
-    <div class="card glow">
-      <div class="card-head">
-        <div class="card-title" style="color:var(--cyan)"><i class="fa-solid fa-calculator"></i> SGPA Calculator</div>
-        <button class="btn btn-ghost btn-sm" onclick="addCourse()">+ Course</button>
-      </div>
-      <div id="courses-wrap" style="max-height:280px;overflow-y:auto;"></div>
-      <div id="courses-empty" class="empty" style="margin:0 0 10px;">Add courses above</div>
-      <button class="btn btn-cyan btn-full" onclick="calcSGPA()"><i class="fa-solid fa-bolt"></i> Calculate SGPA</button>
-      <div class="sgpa-box" id="sgpa-out">
-        <div class="sgpa-num" id="sgpa-num">—</div>
-        <div class="sgpa-out-lbl">Predicted SGPA (VIT Scale)</div>
-        <div class="sgpa-grade-badge" id="sgpa-badge">—</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title"><i class="fa-solid fa-table"></i> CGPA Tracker</div>
-        <button class="btn btn-ghost btn-sm" onclick="openCgpaModal()">+ Semester</button>
-      </div>
-      <table class="sem-table">
-        <thead><tr>
-          <th>Semester</th><th>SGPA</th><th>Credits</th><th>CGPA</th><th></th>
-        </tr></thead>
-        <tbody id="cgpa-rows"></tbody>
-      </table>
-      <div id="cgpa-empty" class="empty">No semesters yet</div>
-      <div class="chart-box" style="margin-top:14px;height:130px;">
-        <canvas id="cgpaChart"></canvas>
-      </div>
-    </div>
-  </div>
-</div>
- 
-<!-- ── SNIPPETS ──────────────────────────────────── -->
-<div class="panel" id="panel-snippets">
-  <div class="card">
-    <div class="card-head">
-      <div class="card-title" style="color:var(--purple)"><i class="fa-solid fa-code"></i> Code Snippets</div>
-      <div style="display:flex;gap:8px;">
-        <input type="text" id="snip-search" placeholder="Search snippets…" style="width:180px;" oninput="renderSnippets()">
-        <button class="btn btn-cyan" onclick="openSnipModal()"><i class="fa-solid fa-plus"></i> New</button>
-      </div>
-    </div>
-    <div id="snippets-list"></div>
-    <div id="snip-empty" class="empty">No snippets yet. Save your favourite code blocks!</div>
-  </div>
-</div>
- 
-<!-- ── LINKS ─────────────────────────────────────── -->
-<div class="panel" id="panel-links">
-  <div class="grid-2">
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title"><i class="fa-solid fa-bolt"></i> Quick Links</div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <a href="https://leetcode.com" target="_blank" class="res-item"><i class="fa-solid fa-code" style="color:#ffa116"></i><span class="res-name">LeetCode</span></a>
-        <a href="https://github.com" target="_blank" class="res-item"><i class="fa-brands fa-github"></i><span class="res-name">GitHub</span></a>
-        <a href="https://hackerrank.com" target="_blank" class="res-item"><i class="fa-brands fa-hackerrank" style="color:#2ec866"></i><span class="res-name">HackerRank</span></a>
-        <a href="https://stackoverflow.com" target="_blank" class="res-item"><i class="fa-brands fa-stack-overflow" style="color:#f48024"></i><span class="res-name">Stack Overflow</span></a>
-        <a href="https://developer.mozilla.org" target="_blank" class="res-item"><i class="fa-brands fa-firefox"></i><span class="res-name">MDN Docs</span></a>
-        <a href="https://cppreference.com" target="_blank" class="res-item"><i class="fa-solid fa-book" style="color:var(--accent2)"></i><span class="res-name">CPP Reference</span></a>
-        <a href="https://visualgo.net" target="_blank" class="res-item"><i class="fa-solid fa-diagram-project"></i><span class="res-name">VisuAlgo</span></a>
-        <a href="https://excalidraw.com" target="_blank" class="res-item"><i class="fa-solid fa-pencil"></i><span class="res-name">Excalidraw</span></a>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title"><i class="fa-solid fa-folder-plus"></i> My Links</div>
-        <button class="btn btn-ghost btn-sm" onclick="openLinkModal()">+ Add</button>
-      </div>
-      <div id="user-links"></div>
-      <div id="links-empty" class="empty">No saved links yet</div>
-    </div>
-  </div>
-</div>
- 
-</main><!-- /main -->
- 
-<!-- ═══ RIGHT SIDEBAR ═════════════════════════════ -->
-<aside class="sidebar-right">
- 
-  <!-- AI ASSISTANT -->
-  <div class="ai-wrap">
-    <div class="ai-top">
-      <div class="ai-pulse"></div>
-      <span class="ai-label">AI Assistant</span>
-      <span class="ai-model">claude-sonnet</span>
-    </div>
-    <div class="ai-msgs" id="ai-msgs">
-      <div class="msg msg-a">
-        Hey! I'm your CS study assistant. Ask me about algorithms, DSA problems, debugging, SGPA strategy, or anything CS-related.
-      </div>
-    </div>
-    <div class="ai-chips" id="ai-chips">
-      <div class="chip" onclick="askChip('Best way to revise DSA for placements?')">DSA tips</div>
-      <div class="chip" onclick="askChip('Explain time complexity of quicksort')">QuickSort</div>
-      <div class="chip" onclick="askChip('How do I improve my CGPA at VIT?')">Improve CGPA</div>
-      <div class="chip" onclick="askChip('Suggest a 30-day study plan for OS exam')">OS plan</div>
-    </div>
-    <div class="ai-input-row">
-      <input type="text" id="ai-input" placeholder="Ask anything CS…" onkeydown="if(event.key==='Enter')sendAI()">
-      <button class="btn btn-cyan btn-icon" onclick="sendAI()"><i class="fa-solid fa-arrow-up"></i></button>
-    </div>
-  </div>
- 
-  <!-- POMODORO -->
-  <div class="pom-panel">
-    <div class="pom-head"><i class="fa-regular fa-clock" style="color:var(--cyan)"></i> Pomodoro</div>
-    <div class="pomodoro-wrap">
-      <div class="pom-ring">
-        <svg class="pom-svg" width="110" height="110" viewBox="0 0 110 110">
-          <circle class="pom-track" cx="55" cy="55" r="48"/>
-          <circle class="pom-fill" cx="55" cy="55" r="48" id="pom-arc"
-            stroke="var(--cyan)" stroke-dasharray="301.6" stroke-dashoffset="0"/>
-        </svg>
-        <div class="pom-center">
-          <div class="pom-time" id="pom-time" style="color:var(--cyan)">25:00</div>
-          <div class="pom-mode" id="pom-mode">FOCUS</div>
+<body class="p-4 lg:p-6">
+
+    <header class="flex justify-between items-center mb-10 px-4">
+        <div class="flex items-center space-x-4">
+            <div class="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center text-2xl shadow-lg">💻</div>
+            <div>
+                <h1 class="text-xl font-bold tracking-tighter code-font">VEYRANSH <span class="text-blue-500">CS_OS</span></h1>
+                <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Environment: Development | Role: Software Engineer</p>
+            </div>
         </div>
-      </div>
-      <div class="pom-btns">
-        <button class="btn btn-ghost btn-sm" onclick="pomReset()"><i class="fa-solid fa-rotate-left"></i></button>
-        <button class="btn btn-cyan btn-sm" id="pom-start-btn" onclick="pomToggle()"><i class="fa-solid fa-play"></i> Start</button>
-        <button class="btn btn-ghost btn-sm" onclick="pomSkip()"><i class="fa-solid fa-forward-step"></i></button>
-      </div>
-      <div class="pom-sessions" id="pom-dots"></div>
-    </div>
-  </div>
- 
-  <!-- TERMINAL -->
-  <div class="term-panel">
-    <div class="term-head">
-      <div class="term-dots"><div class="td td-r"></div><div class="td td-y"></div><div class="td td-g"></div></div>
-      <span class="term-label">CS_OS / system.log</span>
-    </div>
-    <div class="term-body" id="term-body"></div>
-  </div>
- 
-</aside>
- 
-<!-- ═══ STATUS BAR ════════════════════════════════ -->
-<footer class="statusbar">
-  <div class="sb-item"><i class="fa-brands fa-git-alt"></i> main</div>
-  <div class="sb-item"><i class="fa-solid fa-microchip"></i> CS_OS v2.0</div>
-  <div class="sb-item"><i class="fa-solid fa-graduation-cap"></i> VIT University</div>
-  <div class="statusbar-right">
-    <div class="sb-item"><i class="fa-solid fa-shield-halved"></i> Secure</div>
-    <div class="sb-item" id="sb-date"></div>
-  </div>
-</footer>
- 
-</div><!-- /shell -->
- 
-<!-- ═══ MODALS ════════════════════════════════════ -->
- 
-<!-- Deadline Modal -->
-<div class="overlay" id="dl-modal">
-  <div class="modal">
-    <div class="modal-title">📅 New Deadline</div>
-    <div class="field" style="margin-bottom:12px;"><label>Task Name</label>
-      <input type="text" id="dl-name" placeholder="e.g. Compiler Design Project"></div>
-    <div class="field" style="margin-bottom:12px;"><label>Due Date</label>
-      <input type="date" id="dl-date"></div>
-    <div class="field"><label>Priority</label>
-      <select id="dl-pri"><option value="Urgent">🔴 Urgent</option><option value="High">🟠 High</option><option value="Medium">🔵 Medium</option></select>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-cyan" style="flex:1;" onclick="saveDl()">Save Deadline</button>
-      <button class="btn btn-ghost" onclick="closeModal('dl-modal')">Cancel</button>
-    </div>
-  </div>
-</div>
- 
-<!-- Snippet Modal -->
-<div class="overlay" id="snip-modal">
-  <div class="modal">
-    <div class="modal-title">💾 Save Snippet</div>
-    <div class="field" style="margin-bottom:10px;"><label>Title</label>
-      <input type="text" id="snip-title" placeholder="e.g. Binary Search Template"></div>
-    <div class="field" style="margin-bottom:10px;"><label>Language</label>
-      <select id="snip-lang">
-        <option>C++</option><option>Python</option><option>Java</option>
-        <option>JavaScript</option><option>C</option><option>Other</option>
-      </select></div>
-    <div class="field"><label>Code</label>
-      <textarea id="snip-code" style="min-height:130px;font-size:11.5px;" placeholder="Paste your code here…"></textarea></div>
-    <div class="modal-actions">
-      <button class="btn btn-cyan" style="flex:1;" onclick="saveSnip()">Save</button>
-      <button class="btn btn-ghost" onclick="closeModal('snip-modal')">Cancel</button>
-    </div>
-  </div>
-</div>
- 
-<!-- Semester Modal -->
-<div class="overlay" id="cgpa-modal">
-  <div class="modal">
-    <div class="modal-title">🎓 Add Semester</div>
-    <div class="field" style="margin-bottom:10px;"><label>Semester Name</label>
-      <input type="text" id="sem-name" placeholder="e.g. Semester 3"></div>
-    <div class="field" style="margin-bottom:10px;"><label>SGPA</label>
-      <input type="number" id="sem-sgpa" step="0.01" min="0" max="10" placeholder="8.75"></div>
-    <div class="field"><label>Total Credits</label>
-      <input type="number" id="sem-credits" value="20"></div>
-    <div class="modal-actions">
-      <button class="btn btn-cyan" style="flex:1;" onclick="saveSem()">Add</button>
-      <button class="btn btn-ghost" onclick="closeModal('cgpa-modal')">Cancel</button>
-    </div>
-  </div>
-</div>
- 
-<!-- Link Modal -->
-<div class="overlay" id="link-modal">
-  <div class="modal">
-    <div class="modal-title">🔗 Save Link</div>
-    <div class="field" style="margin-bottom:10px;"><label>Name</label>
-      <input type="text" id="lnk-name" placeholder="e.g. My Portfolio"></div>
-    <div class="field"><label>URL</label>
-      <input type="text" id="lnk-url" placeholder="https://…"></div>
-    <div class="modal-actions">
-      <button class="btn btn-cyan" style="flex:1;" onclick="saveLink()">Save</button>
-      <button class="btn btn-ghost" onclick="closeModal('link-modal')">Cancel</button>
-    </div>
-  </div>
-</div>
- 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
-<script>
-// ════════════════════════════════════════
-// STATE
-// ════════════════════════════════════════
-const S = {
-  tasks: [],
-  deadlines: [
-    { id:1, name:"Compiler Design Project", date:"2026-04-10", pri:"Urgent" },
-    { id:2, name:"LeetCode 50-Day Challenge", date:"2026-05-01", pri:"High"  },
-    { id:3, name:"OS Lab Assignment",         date:"2026-04-14", pri:"High"  }
-  ],
-  snippets: [
-    { id:10, title:"Binary Search", lang:"C++", code:`int binarySearch(vector<int>& arr, int target) {\n    int l = 0, r = arr.size() - 1;\n    while (l <= r) {\n        int mid = l + (r - l) / 2;\n        if (arr[mid] == target) return mid;\n        else if (arr[mid] < target) l = mid + 1;\n        else r = mid - 1;\n    }\n    return -1;\n}`, open:false },
-    { id:11, title:"Dijkstra's Algorithm", lang:"C++", code:`priority_queue<pair<int,int>, vector<pair<int,int>>, greater<>> pq;\nvector<int> dist(n, INT_MAX);\ndist[src] = 0;\npq.push({0, src});\nwhile (!pq.empty()) {\n    auto [d, u] = pq.top(); pq.pop();\n    for (auto [v, w] : adj[u])\n        if (dist[u] + w < dist[v])\n            pq.push({dist[v] = dist[u]+w, v});\n}`, open:false }
-  ],
-  courses: [
-    { id:20, name:"Operating Systems",  credits:4, grade:"S" },
-    { id:21, name:"Compiler Design",    credits:4, grade:"A" },
-    { id:22, name:"Data Structures",    credits:4, grade:"S" }
-  ],
-  semesters: [
-    { id:30, name:"Semester 1", sgpa:8.5,  credits:20 },
-    { id:31, name:"Semester 2", sgpa:8.9,  credits:22 },
-    { id:32, name:"Semester 3", sgpa:9.1,  credits:24 }
-  ],
-  userLinks: [],
-  chartPts: [72, 75, 79, 77, 83, 82, 86, 88, 90, 92],
-  nextId: 200
-};
- 
-const GRADES = { S:10, A:9, B:8, C:7, D:6, E:5, F:0 };
-const QUOTES = [
-  { q:"First, solve the problem. Then, write the code.", a:"John Johnson" },
-  { q:"Code is like humor. When you have to explain it, it's bad.", a:"Cory House" },
-  { q:"Any fool can write code a computer understands. Good programmers write code humans can.", a:"Martin Fowler" },
-  { q:"The best error message is the one that never shows up.", a:"Thomas Fuchs" },
-  { q:"Simplicity is the soul of efficiency.", a:"Austin Freeman" },
-  { q:"Programming is thinking, not typing.", a:"Casey Patton" },
-  { q:"Clean code always looks like it was written by someone who cares.", a:"Robert C. Martin" }
-];
- 
-// ════════════════════════════════════════
-// CLOCK + DATE
-// ════════════════════════════════════════
-function tick() {
-  const now = new Date();
-  document.getElementById('topbar-clock').textContent =
-    now.toLocaleTimeString('en-US', { hour12: false });
-  document.getElementById('sb-date').textContent =
-    now.toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short' });
-}
-setInterval(tick, 1000); tick();
- 
-// ════════════════════════════════════════
-// TAB SWITCHING
-// ════════════════════════════════════════
-function switchTab(name) {
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.topbar-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.nav-icon').forEach(n => n.classList.remove('active'));
-  document.getElementById('panel-' + name).classList.add('active');
-  const tt = [...document.querySelectorAll('.topbar-tab')].find(t => t.textContent.toLowerCase().includes(name.substring(0,4)));
-  if (tt) tt.classList.add('active');
-  log(`Panel: ${name}`, 'info');
-}
- 
-// ════════════════════════════════════════
-// TERMINAL
-// ════════════════════════════════════════
-const termEl = document.getElementById('term-body');
-function log(msg, type='') {
-  const ts = new Date().toLocaleTimeString('en-US',{hour12:false});
-  const d = document.createElement('div');
-  d.className = 'tl ' + type;
-  d.textContent = `[${ts}] ${msg}`;
-  termEl.prepend(d);
-  while (termEl.children.length > 60) termEl.removeChild(termEl.lastChild);
-}
-log('CS_OS kernel booted.', 'ok');
-log('All modules initialised.', 'info');
-log('AI assistant ready.', 'info');
- 
-// ════════════════════════════════════════
-// MAIN CHART
-// ════════════════════════════════════════
-let mainChart, cgpaChart;
-function initCharts() {
-  const opts = (color) => ({
-    responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { display: false }, tooltip: {
-      backgroundColor: '#12141c', titleColor: '#7a8099',
-      bodyColor: color, borderColor: 'rgba(255,255,255,0.07)', borderWidth: 1,
-      padding: 10
-    }},
-    scales: {
-      x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#3a3e50', font: { family: 'IBM Plex Mono', size: 10 } } },
-      y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#3a3e50', font: { family: 'IBM Plex Mono', size: 10 } }, min: 60, max: 100 }
-    }
-  });
-  mainChart = new Chart(document.getElementById('mainChart').getContext('2d'), {
-    type: 'line',
-    data: {
-      labels: S.chartPts.map((_,i) => `D${i+1}`),
-      datasets: [{
-        data: [...S.chartPts],
-        borderColor: '#00d4ff', backgroundColor: 'rgba(0,212,255,0.05)',
-        borderWidth: 2, pointBackgroundColor: '#00d4ff', pointRadius: 3,
-        pointHoverRadius: 5, fill: true, tension: 0.45
-      }]
-    },
-    options: opts('#00d4ff')
-  });
-  cgpaChart = new Chart(document.getElementById('cgpaChart').getContext('2d'), {
-    type: 'bar',
-    data: { labels: [], datasets: [{ data: [], backgroundColor: 'rgba(0,212,255,0.25)', borderColor: '#00d4ff', borderWidth: 1, borderRadius: 4 }] },
-    options: { ...opts('#00d4ff'), scales: { x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color:'#3a3e50', font:{family:'IBM Plex Mono',size:10} } }, y: { min: 5, max: 10, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color:'#3a3e50', font:{family:'IBM Plex Mono',size:10} } } } }
-  });
-}
- 
-function pushChartPoint() {
-  const last = S.chartPts[S.chartPts.length - 1];
-  const v = Math.min(100, Math.max(62, last + (Math.random() - 0.35) * 10));
-  S.chartPts.push(Math.round(v));
-  mainChart.data.labels.push(`D${S.chartPts.length}`);
-  mainChart.data.datasets[0].data.push(Math.round(v));
-  mainChart.update();
-  log(`Productivity point: ${Math.round(v)}`, 'info');
-}
- 
-function refreshCgpaChart() {
-  cgpaChart.data.labels = S.semesters.map(s => s.name.replace('Semester ','S'));
-  cgpaChart.data.datasets[0].data = S.semesters.map(s => s.sgpa);
-  cgpaChart.update();
-}
- 
-// ════════════════════════════════════════
-// TASKS
-// ════════════════════════════════════════
-function addTask() {
-  const inp = document.getElementById('task-input');
-  const cat = document.getElementById('task-cat').value;
-  const txt = inp.value.trim();
-  if (!txt) return;
-  S.tasks.push({ id: S.nextId++, text: txt, cat, done: false });
-  inp.value = '';
-  renderTasks(); updateStats();
-  log(`Task: "${txt}"`, 'info');
-}
-function toggleTask(id) {
-  const t = S.tasks.find(x => x.id === id);
-  if (t) { t.done = !t.done; renderTasks(); updateStats(); log(t.done ? `Done: "${t.text}"` : `Reopen: "${t.text}"`, 'ok'); }
-}
-function delTask(id) {
-  S.tasks = S.tasks.filter(x => x.id !== id);
-  renderTasks(); updateStats();
-  log('Task removed.', 'warn');
-}
-function renderTasks() {
-  const pending = S.tasks.filter(t => !t.done);
-  const done    = S.tasks.filter(t =>  t.done);
-  const catTag = { general:'tag-cyan', dsa:'tag-purple', project:'tag-amber', study:'tag-green', urgent:'tag-red' };
- 
-  const build = (arr, el, empty) => {
-    el.innerHTML = '';
-    empty.style.display = arr.length ? 'none' : '';
-    arr.forEach(t => {
-      const d = document.createElement('div');
-      d.className = 'task-item' + (t.done ? ' done' : '');
-      d.innerHTML = `
-        <div class="task-check ${t.done?'on':''}" onclick="toggleTask(${t.id})"></div>
-        <div class="task-body">
-          <div class="task-text">${esc(t.text)}</div>
-          <div class="task-meta">
-            <span class="tag ${catTag[t.cat]||'tag-cyan'}">${t.cat}</span>
-          </div>
+        <div class="text-right flex items-center space-x-6">
+            <div class="hidden md:block">
+                <p id="live-clock" class="text-lg font-bold code-font text-blue-400">--:--:--</p>
+                <p id="live-date" class="text-[10px] text-gray-500 uppercase font-bold"></p>
+            </div>
+            <button onclick="toggleAI()" class="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center hover:bg-indigo-500 transition shadow-lg shadow-indigo-500/20">
+                <i class="fa-solid fa-robot"></i>
+            </button>
         </div>
-        <div class="task-actions">
-          <button class="tiny-btn" onclick="delTask(${t.id})"><i class="fa-solid fa-trash"></i></button>
-        </div>`;
-      el.appendChild(d);
-    });
-  };
-  build(pending, document.getElementById('pending-list'), document.getElementById('pending-empty'));
-  build(done,    document.getElementById('done-list'),    document.getElementById('done-empty'));
-  document.getElementById('pending-count').textContent = pending.length;
-  document.getElementById('done-count').textContent    = done.length;
-}
- 
-// ════════════════════════════════════════
-// DEADLINES
-// ════════════════════════════════════════
-function openDlModal() {
-  document.getElementById('dl-date').value = new Date().toISOString().split('T')[0];
-  document.getElementById('dl-modal').classList.add('on');
-}
-function saveDl() {
-  const name = document.getElementById('dl-name').value.trim();
-  const date = document.getElementById('dl-date').value;
-  const pri  = document.getElementById('dl-pri').value;
-  if (!name || !date) return;
-  S.deadlines.push({ id: S.nextId++, name, date, pri });
-  document.getElementById('dl-name').value = '';
-  closeModal('dl-modal');
-  renderDeadlines(); updateStats();
-  log(`Deadline: "${name}"`, 'warn');
-}
-function delDl(id) {
-  S.deadlines = S.deadlines.filter(d => d.id !== id);
-  renderDeadlines(); updateStats();
-}
-function renderDeadlines() {
-  const sorted = [...S.deadlines].sort((a,b) => new Date(a.date)-new Date(b.date));
-  ['dash-deadlines','dl-list-full'].forEach(elId => {
-    const el = document.getElementById(elId);
-    if (!el) return;
-    el.innerHTML = '';
-    if (!sorted.length) { el.innerHTML = '<div class="empty">No deadlines</div>'; return; }
-    const show = elId === 'dash-deadlines' ? sorted.slice(0,5) : sorted;
-    show.forEach(d => {
-      const days = Math.ceil((new Date(d.date) - new Date()) / 86400000);
-      const dStr = days < 0 ? '⚠ Overdue' : days === 0 ? '⚡ Today' : `${days}d left`;
-      const dCol = days < 0 ? 'var(--red)' : days <= 3 ? 'var(--amber)' : 'var(--text2)';
-      const prog = Math.max(0, Math.min(100, 100 - days * 2));
-      const tagC = d.pri === 'Urgent' ? 'tag-red' : d.pri === 'High' ? 'tag-amber' : 'tag-cyan';
-      const div = document.createElement('div');
-      div.className = 'dl-item';
-      div.innerHTML = `
-        <div class="dl-left">
-          <div class="dl-name">${esc(d.name)}</div>
-          <div class="dl-date">${d.date} &nbsp;·&nbsp; <span style="color:${dCol}">${dStr}</span></div>
-          <div class="dl-prog"><div class="dl-prog-fill" style="width:${prog}%;background:${dCol}"></div></div>
+    </header>
+
+    <main class="grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1600px] mx-auto">
+        
+        <section class="lg:col-span-3 space-y-6">
+            <div class="glass-card p-6">
+                <h3 class="text-xs font-bold text-gray-500 uppercase mb-6 tracking-widest">Quick Access</h3>
+                <div class="grid grid-cols-4 gap-6 text-center">
+                    <a href="https://leetcode.com/" target="_blank" class="platform-icon"><i class="fa-solid fa-code"></i><p class="text-[8px] mt-1 uppercase">LeetCode</p></a>
+                    <a href="https://github.com/" target="_blank" class="platform-icon"><i class="fa-brands fa-github"></i><p class="text-[8px] mt-1 uppercase">GitHub</p></a>
+                    <a href="https://hackerrank.com/" target="_blank" class="platform-icon"><i class="fa-brands fa-hackerrank"></i><p class="text-[8px] mt-1 uppercase">Rank</p></a>
+                    <a href="https://stackoverflow.com/" target="_blank" class="platform-icon"><i class="fa-brands fa-stack-overflow"></i><p class="text-[8px] mt-1 uppercase">Stack</p></a>
+                </div>
+            </div>
+
+            <div class="glass-card p-6">
+                <h3 class="text-xs font-bold text-gray-500 uppercase mb-4 tracking-widest">Add Custom Resource</h3>
+                <div class="space-y-3">
+                    <input type="text" id="res-name" placeholder="Name (e.g. My Portfolio)" class="input-dark text-xs">
+                    <input type="text" id="res-url" placeholder="URL (https://...)" class="input-dark text-xs">
+                    <button onclick="addResource()" class="btn-primary w-full text-[10px]">SAVE LINK</button>
+                </div>
+                <div id="dynamic-resources" class="mt-4 space-y-2">
+                    </div>
+            </div>
+
+            <div class="p-6 bg-orange-600/10 border border-orange-500/20 rounded-2xl flex items-center justify-between">
+                <div>
+                    <h4 class="text-xs font-bold text-orange-400">LeetCode Streak</h4>
+                    <p class="text-[10px] text-gray-400">Daily problem is pending!</p>
+                </div>
+                <a href="https://leetcode.com/problemset/all/" target="_blank" class="text-orange-500 hover:scale-110 transition"><i class="fa-solid fa-fire text-2xl"></i></a>
+            </div>
+        </section>
+
+        <section class="lg:col-span-6 space-y-6">
+            <div class="glass-card p-6">
+                <h3 class="text-xs font-bold text-blue-400 uppercase mb-4 flex items-center">
+                    <i class="fa-solid fa-calculator mr-2"></i> VIT SGPA Estimator
+                </h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="text-[9px] text-gray-500 font-bold uppercase mb-1 block">Course Credits</label>
+                        <input type="number" id="credits" value="4" class="input-dark">
+                    </div>
+                    <div>
+                        <label class="text-[9px] text-gray-500 font-bold uppercase mb-1 block">Target Grade</label>
+                        <select id="grade" class="input-dark">
+                            <option value="10">S (10)</option>
+                            <option value="9">A (9)</option>
+                            <option value="8">B (8)</option>
+                            <option value="7">C (7)</option>
+                        </select>
+                    </div>
+                </div>
+                <button onclick="predictSGPA()" class="btn-primary w-full mt-4 text-[10px]">RUN ML SIMULATION</button>
+                <div id="sgpa-out" class="mt-4 text-center font-bold text-2xl text-emerald-400 hidden"></div>
+            </div>
+
+            <div class="glass-card p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-xs font-bold text-gray-500 uppercase tracking-widest">Productivity Trend</h3>
+                    <button onclick="updateGraph()" class="text-blue-500 text-xs"><i class="fa-solid fa-arrows-rotate"></i></button>
+                </div>
+                <div class="bg-black/40 rounded-xl border border-white/5 overflow-hidden">
+                    <img id="main-chart" src="/get_plot" class="w-full h-auto">
+                </div>
+            </div>
+
+            <div class="glass-card p-6">
+                <h3 class="text-xs font-bold text-gray-500 uppercase mb-4 tracking-widest">Daily Task Planner</h3>
+                <div class="flex space-x-2 mb-4">
+                    <input type="text" id="new-task" placeholder="e.g. Finish React Hooks" class="input-dark">
+                    <button onclick="addTask()" class="btn-primary px-6"><i class="fa-solid fa-plus"></i></button>
+                </div>
+                <div id="task-list" class="space-y-2 max-h-40 overflow-y-auto pr-2">
+                    </div>
+            </div>
+        </section>
+
+        <section class="lg:col-span-3 space-y-6">
+            <div class="glass-card p-6 border-l-4 border-red-500">
+                <h3 class="text-xs font-bold text-red-500 uppercase mb-4 flex justify-between items-center">
+                    <span>Deadlines</span>
+                    <button onclick="showDeadlineModal()" class="text-[10px] bg-red-500/10 px-2 py-1 rounded">+ Add</button>
+                </h3>
+                <div id="deadline-list" class="space-y-3">
+                    </div>
+            </div>
+
+            <div class="bg-black border border-white/5 p-4 rounded-xl font-mono text-[10px] h-48 overflow-y-auto shadow-inner">
+                <p class="text-emerald-500">> [SYSTEM] Booting CS_OS Kernel...</p>
+                <p class="text-gray-500">> [LOG] Developer Authenticated.</p>
+                <div id="terminal-logs"></div>
+            </div>
+        </section>
+    </main>
+
+    <div id="d-modal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50 p-4">
+        <div class="glass-card p-8 max-w-sm w-full">
+            <h2 class="text-lg font-bold mb-4">New Deadline</h2>
+            <input type="text" id="d-task" placeholder="Task Name" class="input-dark mb-3">
+            <input type="date" id="d-date" class="input-dark mb-4">
+            <div class="flex space-x-2">
+                <button onclick="saveDeadline()" class="btn-primary flex-1">Save</button>
+                <button onclick="toggleAI()" class="btn-engg flex-1 bg-gray-800 rounded-lg text-xs">Cancel</button>
+            </div>
         </div>
-        <span class="tag ${tagC}">${d.pri}</span>
-        <button class="dl-del" onclick="delDl(${d.id})"><i class="fa-solid fa-xmark"></i></button>`;
-      el.appendChild(div);
-    });
-  });
-}
- 
-// ════════════════════════════════════════
-// SNIPPETS
-// ════════════════════════════════════════
-function openSnipModal() { document.getElementById('snip-modal').classList.add('on'); }
-function saveSnip() {
-  const title = document.getElementById('snip-title').value.trim();
-  const lang  = document.getElementById('snip-lang').value;
-  const code  = document.getElementById('snip-code').value.trim();
-  if (!title || !code) return;
-  S.snippets.unshift({ id: S.nextId++, title, lang, code, open: false });
-  document.getElementById('snip-title').value = '';
-  document.getElementById('snip-code').value = '';
-  closeModal('snip-modal');
-  renderSnippets(); updateStats();
-  log(`Snippet saved: "${title}"`, 'ok');
-}
-function toggleSnip(id) {
-  const s = S.snippets.find(x => x.id === id);
-  if (s) s.open = !s.open;
-  renderSnippets();
-}
-function copySnip(id) {
-  const s = S.snippets.find(x => x.id === id);
-  if (!s) return;
-  navigator.clipboard.writeText(s.code).catch(() => {});
-  log(`Copied: "${s.title}"`, 'ok');
-}
-function delSnip(id) {
-  S.snippets = S.snippets.filter(x => x.id !== id);
-  renderSnippets(); updateStats();
-}
-function renderSnippets() {
-  const q = (document.getElementById('snip-search')?.value || '').toLowerCase();
-  const filtered = S.snippets.filter(s => s.title.toLowerCase().includes(q) || s.lang.toLowerCase().includes(q));
-  const el = document.getElementById('snippets-list');
-  const empty = document.getElementById('snip-empty');
-  el.innerHTML = '';
-  empty.style.display = filtered.length ? 'none' : '';
-  filtered.forEach(s => {
-    const langColors = { 'C++':'tag-cyan', Python:'tag-green', Java:'tag-amber', JavaScript:'tag-amber', C:'tag-purple', Other:'tag-purple' };
-    const d = document.createElement('div');
-    d.className = 'snippet-item';
-    d.innerHTML = `
-      <div class="snippet-head" onclick="toggleSnip(${s.id})">
-        <span class="tag ${langColors[s.lang]||'tag-purple'}">${s.lang}</span>
-        <span class="snippet-title">${esc(s.title)}</span>
-        <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();copySnip(${s.id})"><i class="fa-regular fa-copy"></i> Copy</button>
-        <button class="tiny-btn" onclick="event.stopPropagation();delSnip(${s.id})"><i class="fa-solid fa-trash"></i></button>
-        <i class="fa-solid fa-chevron-${s.open?'up':'down'}" style="font-size:10px;color:var(--text3);margin-left:4px;"></i>
-      </div>
-      <div class="snippet-body ${s.open?'open':''}">
-        <pre>${esc(s.code)}</pre>
-      </div>`;
-    el.appendChild(d);
-  });
-}
- 
-// ════════════════════════════════════════
-// SGPA CALCULATOR
-// ════════════════════════════════════════
-function addCourse() {
-  S.courses.push({ id: S.nextId++, name: '', credits: 4, grade: 'S' });
-  renderCourses();
-}
-function removeCourse(id) {
-  S.courses = S.courses.filter(c => c.id !== id);
-  renderCourses();
-}
-function updCourse(id, key, val) {
-  const c = S.courses.find(x => x.id === id);
-  if (c) c[key] = key === 'credits' ? +val : val;
-}
-function renderCourses() {
-  const wrap = document.getElementById('courses-wrap');
-  const empty = document.getElementById('courses-empty');
-  wrap.innerHTML = '';
-  empty.style.display = S.courses.length ? 'none' : '';
-  S.courses.forEach(c => {
-    const d = document.createElement('div');
-    d.className = 'course-row';
-    d.innerHTML = `
-      <input type="text" placeholder="Course name" value="${esc(c.name)}" oninput="updCourse(${c.id},'name',this.value)">
-      <input type="number" min="1" max="5" value="${c.credits}" oninput="updCourse(${c.id},'credits',this.value)" style="width:56px;flex-shrink:0;">
-      <select onchange="updCourse(${c.id},'grade',this.value)">
-        ${Object.keys(GRADES).map(g=>`<option value="${g}" ${c.grade===g?'selected':''}>${g} (${GRADES[g]})</option>`).join('')}
-      </select>
-      <button class="rm-btn" onclick="removeCourse(${c.id})"><i class="fa-solid fa-xmark"></i></button>`;
-    wrap.appendChild(d);
-  });
-}
-function calcSGPA() {
-  if (!S.courses.length) { log('Add courses first.','err'); return; }
-  let tp=0, tc=0;
-  S.courses.forEach(c => { tp += (GRADES[c.grade]||0) * c.credits; tc += c.credits; });
-  const sgpa = tc ? tp/tc : 0;
-  document.getElementById('sgpa-num').textContent = sgpa.toFixed(2);
-  const lbl = sgpa>=9.5?'Outstanding 🏆':sgpa>=8.5?'Excellent ⭐':sgpa>=7.5?'Good 👍':sgpa>=6.5?'Average':'Needs Work';
-  document.getElementById('sgpa-badge').textContent = lbl;
-  document.getElementById('sgpa-out').style.display = 'block';
-  pushChartPoint();
-  log(`SGPA: ${sgpa.toFixed(2)} / 10 — ${lbl}`, 'ok');
-}
- 
-// ════════════════════════════════════════
-// CGPA TRACKER
-// ════════════════════════════════════════
-function openCgpaModal() { document.getElementById('cgpa-modal').classList.add('on'); }
-function saveSem() {
-  const name = document.getElementById('sem-name').value.trim();
-  const sgpa = parseFloat(document.getElementById('sem-sgpa').value);
-  const cred = parseInt(document.getElementById('sem-credits').value);
-  if (!name || isNaN(sgpa) || isNaN(cred)) return;
-  S.semesters.push({ id: S.nextId++, name, sgpa, credits: cred });
-  document.getElementById('sem-name').value = '';
-  closeModal('cgpa-modal');
-  renderCgpa(); log(`Semester "${name}" — SGPA: ${sgpa}`, 'ok');
-}
-function delSem(id) {
-  S.semesters = S.semesters.filter(s => s.id !== id);
-  renderCgpa();
-}
-function renderCgpa() {
-  const tbody = document.getElementById('cgpa-rows');
-  const empty = document.getElementById('cgpa-empty');
-  tbody.innerHTML = '';
-  empty.style.display = S.semesters.length ? 'none' : '';
-  let totalPts = 0, totalCred = 0;
-  S.semesters.forEach(sem => {
-    totalPts  += sem.sgpa * sem.credits;
-    totalCred += sem.credits;
-    const cgpa = totalCred ? (totalPts/totalCred).toFixed(2) : '—';
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td style="font-family:var(--sans)">${esc(sem.name)}</td>
-      <td style="color:var(--cyan)">${sem.sgpa.toFixed(2)}</td>
-      <td style="color:var(--text2)">${sem.credits}</td>
-      <td style="color:var(--green);font-weight:600">${cgpa}</td>
-      <td><button class="rm-btn" onclick="delSem(${sem.id})"><i class="fa-solid fa-trash"></i></button></td>`;
-    tbody.appendChild(tr);
-  });
-  refreshCgpaChart();
-}
- 
-// ════════════════════════════════════════
-// LINKS
-// ════════════════════════════════════════
-function openLinkModal() { document.getElementById('link-modal').classList.add('on'); }
-function saveLink() {
-  const name = document.getElementById('lnk-name').value.trim();
-  const url  = document.getElementById('lnk-url').value.trim();
-  if (!name || !url) return;
-  S.userLinks.push({ id: S.nextId++, name, url: url.startsWith('http') ? url : 'https://'+url });
-  document.getElementById('lnk-name').value = '';
-  document.getElementById('lnk-url').value = '';
-  closeModal('link-modal');
-  renderLinks(); log(`Link: "${name}"`, 'info');
-}
-function delLink(id) {
-  S.userLinks = S.userLinks.filter(l => l.id !== id);
-  renderLinks();
-}
-function renderLinks() {
-  const el = document.getElementById('user-links');
-  const empty = document.getElementById('links-empty');
-  el.innerHTML = '';
-  empty.style.display = S.userLinks.length ? 'none' : '';
-  S.userLinks.forEach(l => {
-    const d = document.createElement('div');
-    d.className = 'res-item';
-    d.innerHTML = `<i class="fa-solid fa-link"></i><span class="res-name">${esc(l.name)}</span><button class="res-del" onclick="event.stopPropagation();delLink(${l.id})"><i class="fa-solid fa-xmark"></i></button>`;
-    d.onclick = () => window.open(l.url, '_blank');
-    el.appendChild(d);
-  });
-}
- 
-// ════════════════════════════════════════
-// MODAL HELPERS
-// ════════════════════════════════════════
-function closeModal(id) { document.getElementById(id).classList.remove('on'); }
-document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if(e.target===o) o.classList.remove('on'); }));
- 
-// ════════════════════════════════════════
-// STATS
-// ════════════════════════════════════════
-function updateStats() {
-  const total = S.tasks.length, done = S.tasks.filter(t=>t.done).length;
-  document.getElementById('s-tasks').textContent = total;
-  document.getElementById('s-done').textContent  = done;
-  document.getElementById('s-dl').textContent    = S.deadlines.length;
-  document.getElementById('s-snip').textContent  = S.snippets.length;
-  document.getElementById('sb-tasks').style.width = total ? (done/total*100)+'%' : '0%';
-  document.getElementById('sb-done').style.width  = total ? (done/total*100)+'%' : '0%';
-  document.getElementById('sb-snip').style.width  = (S.snippets.length*10)+'%';
-}
- 
-// ════════════════════════════════════════
-// POMODORO
-// ════════════════════════════════════════
-const POM_PRESETS = [ [25*60,'FOCUS','var(--cyan)'], [5*60,'BREAK','var(--green)'], [25*60,'FOCUS','var(--cyan)'], [5*60,'BREAK','var(--green)'], [25*60,'FOCUS','var(--cyan)'], [15*60,'LONG BREAK','var(--amber)'] ];
-let pomIdx=0, pomLeft=POM_PRESETS[0][0], pomRunning=false, pomTimer=null, pomSessions=0;
-const ARC=301.6;
- 
-function pomRender() {
-  const [dur, label, col] = POM_PRESETS[pomIdx];
-  const m = String(Math.floor(pomLeft/60)).padStart(2,'0');
-  const s = String(pomLeft%60).padStart(2,'0');
-  document.getElementById('pom-time').textContent = `${m}:${s}`;
-  document.getElementById('pom-time').style.color = col;
-  document.getElementById('pom-mode').textContent = label;
-  const arc = document.getElementById('pom-arc');
-  arc.style.stroke = col;
-  arc.style.strokeDashoffset = ARC * (1 - pomLeft/dur);
-  const dots = document.getElementById('pom-dots');
-  dots.innerHTML = [...Array(6)].map((_,i)=>`<div class="pom-dot ${i<pomSessions?'done':''}"></div>`).join('');
-}
-function pomToggle() {
-  pomRunning = !pomRunning;
-  const btn = document.getElementById('pom-start-btn');
-  btn.innerHTML = pomRunning ? '<i class="fa-solid fa-pause"></i> Pause' : '<i class="fa-solid fa-play"></i> Start';
-  if (pomRunning) {
-    pomTimer = setInterval(() => {
-      pomLeft--;
-      if (pomLeft <= 0) {
-        clearInterval(pomTimer);
-        pomRunning = false;
-        pomSessions++;
-        if (pomSessions >= 6) pomSessions = 0;
-        pomIdx = (pomIdx + 1) % POM_PRESETS.length;
-        pomLeft = POM_PRESETS[pomIdx][0];
-        document.getElementById('pom-start-btn').innerHTML = '<i class="fa-solid fa-play"></i> Start';
-        log(`Pomodoro phase complete: ${POM_PRESETS[pomIdx][1]}`, 'ok');
-      }
-      pomRender();
-    }, 1000);
-    log('Pomodoro started.', 'info');
-  } else { clearInterval(pomTimer); }
-}
-function pomReset() {
-  clearInterval(pomTimer); pomRunning = false;
-  pomLeft = POM_PRESETS[pomIdx][0];
-  document.getElementById('pom-start-btn').innerHTML = '<i class="fa-solid fa-play"></i> Start';
-  pomRender();
-}
-function pomSkip() {
-  clearInterval(pomTimer); pomRunning = false;
-  pomIdx = (pomIdx+1) % POM_PRESETS.length;
-  pomLeft = POM_PRESETS[pomIdx][0];
-  document.getElementById('pom-start-btn').innerHTML = '<i class="fa-solid fa-play"></i> Start';
-  pomRender();
-}
- 
-// ════════════════════════════════════════
-// AI ASSISTANT
-// ════════════════════════════════════════
-async function sendAI() {
-  const inp = document.getElementById('ai-input');
-  const q = inp.value.trim(); if (!q) return;
-  inp.value = '';
-  document.getElementById('ai-chips').style.display = 'none';
-  appendMsg(q, true);
-  const thinking = appendMsg('Thinking…', false, true);
-  log(`AI: "${q.substring(0,40)}…"`, 'info');
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514', max_tokens: 1000,
-        system: `You are a sharp, concise CS/engineering assistant embedded in a developer workspace for a VIT university student. 
-Help with: DSA, algorithms, competitive programming, OS, compilers, SGPA/grade strategy, study plans, debugging.
-Rules: Keep answers under 5 sentences unless showing code. No markdown headers. Be direct. For code, use clean plain text.`,
-        messages: [{ role: 'user', content: q }]
-      })
-    });
-    const data = await r.json();
-    const text = data.content?.map(b=>b.text||'').join('') || 'No response received.';
-    thinking.textContent = text;
-    thinking.classList.remove('thinking');
-    log('AI response received.', 'ok');
-  } catch(e) {
-    thinking.textContent = 'Network error. Please try again.';
-    thinking.classList.remove('thinking');
-    log('AI error: '+e.message, 'err');
-  }
-}
-function askChip(q) {
-  document.getElementById('ai-input').value = q;
-  sendAI();
-}
-function appendMsg(text, isUser, isThinking=false) {
-  const msgs = document.getElementById('ai-msgs');
-  const d = document.createElement('div');
-  d.className = `msg ${isUser?'msg-u':'msg-a'}${isThinking?' thinking':''}`;
-  d.textContent = text;
-  msgs.appendChild(d);
-  msgs.scrollTop = msgs.scrollHeight;
-  return d;
-}
- 
-// ════════════════════════════════════════
-// QUOTE
-// ════════════════════════════════════════
-function loadQuote() {
-  const q = QUOTES[Math.floor(Math.random() * QUOTES.length)];
-  document.getElementById('quote-text').textContent = q.q;
-  document.getElementById('quote-author').textContent = '— ' + q.a;
-}
- 
-// ════════════════════════════════════════
-// HELPERS
-// ════════════════════════════════════════
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
- 
-// ════════════════════════════════════════
-// INIT
-// ════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', () => {
-  initCharts();
-  renderTasks();
-  renderDeadlines();
-  renderCourses();
-  renderCgpa();
-  renderSnippets();
-  renderLinks();
-  updateStats();
-  pomRender();
-  loadQuote();
-});
-</script>
+    </div>
+
+    <script>
+        // CORE JS LOGIC
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('live-clock').innerText = now.toLocaleTimeString();
+            document.getElementById('live-date').innerText = now.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
+        }
+        setInterval(updateTime, 1000); updateTime();
+
+        function addTerminalLog(msg) {
+            const div = document.getElementById('terminal-logs');
+            const p = document.createElement('p');
+            p.className = 'text-gray-400 mt-1';
+            p.innerText = `> [${new Date().toLocaleTimeString()}] ${msg}`;
+            div.prepend(p);
+        }
+
+        // RESOURCE MANAGEMENT
+        async function addResource() {
+            const name = document.getElementById('res-name').value;
+            const url = document.getElementById('res-url').value;
+            if(!name || !url) return;
+            const res = await fetch('/add_resource', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, url})
+            });
+            loadResources();
+            addTerminalLog(`Added resource: ${name}`);
+        }
+
+        async function loadResources() {
+            const res = await fetch('/get_resources');
+            const data = await res.json();
+            const div = document.getElementById('dynamic-resources');
+            div.innerHTML = data.map(r => `
+                <a href="${r.url}" target="_blank" class="flex justify-between items-center p-2 bg-white/5 rounded-lg border border-white/5 hover:border-blue-500 transition">
+                    <span class="text-[10px] font-bold">${r.name}</span>
+                    <i class="fa-solid fa-arrow-up-right-from-square text-[8px] text-gray-500"></i>
+                </a>
+            `).join('');
+        }
+
+        // SGPA PREDICTION
+        function predictSGPA() {
+            const credit = document.getElementById('credits').value;
+            const gradeVal = document.getElementById('grade').value;
+            const res = (credit * gradeVal) / credit; // Simple Logic for VIT
+            const out = document.getElementById('sgpa-out');
+            out.innerText = `ESTIMATED SGPA: ${res.toFixed(2)}`;
+            out.classList.remove('hidden');
+            addTerminalLog(`Calculated predicted SGPA: ${res}`);
+        }
+
+        // TASK MANAGER
+        function addTask() {
+            const val = document.getElementById('new-task').value;
+            if(!val) return;
+            const div = document.getElementById('task-list');
+            div.innerHTML += `
+                <div class="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5 group">
+                    <span class="text-xs">${val}</span>
+                    <button class="text-red-500 opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-trash-can"></i></button>
+                </div>
+            `;
+            document.getElementById('new-task').value = "";
+            addTerminalLog(`New task added: ${val}`);
+        }
+
+        // DEADLINE MODAL
+        function showDeadlineModal() { document.getElementById('d-modal').classList.remove('hidden'); document.getElementById('d-modal').classList.add('flex'); }
+        function toggleAI() { document.getElementById('d-modal').classList.add('hidden'); }
+
+        async function saveDeadline() {
+            const task = document.getElementById('d-task').value;
+            const date = document.getElementById('d-date').value;
+            await fetch('/add_deadline', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({task, date, priority: 'High'})
+            });
+            loadDeadlines();
+            toggleAI();
+            addTerminalLog(`Deadline set: ${task}`);
+        }
+
+        async function loadDeadlines() {
+            const res = await fetch('/get_deadlines');
+            const data = await res.json();
+            document.getElementById('deadline-list').innerHTML = data.map(d => `
+                <div class="p-3 bg-white/5 rounded-xl mb-2 border-l-2 border-red-500">
+                    <p class="text-[10px] font-bold">${d.task}</p>
+                    <p class="text-[8px] text-gray-500 italic">${d.date}</p>
+                </div>
+            `).join('');
+        }
+
+        function updateGraph() {
+            document.getElementById('main-chart').src = '/get_plot?v=' + Date.now();
+            addTerminalLog("Graph re-rendered from data buffer.");
+        }
+
+        // INITIAL LOAD
+        loadResources();
+        loadDeadlines();
+    </script>
 </body>
 </html>
- 
+"""
+
+# ==========================================
+# 3. BACKEND ROUTES (Full Functionality)
+# ==========================================
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_UI)
+
+@app.route('/get_resources')
+def get_resources():
+    return jsonify(USER_DATA['resources'])
+
+@app.route('/add_resource', methods=['POST'])
+def add_resource():
+    data = request.json
+    USER_DATA['resources'].append({"name": data['name'], "url": data['url'], "icon": "fa-link"})
+    return jsonify({"status": "success"})
+
+@app.route('/get_deadlines')
+def get_deadlines():
+    return jsonify(USER_DATA['deadlines'])
+
+@app.route('/add_deadline', methods=['POST'])
+def add_deadline():
+    data = request.json
+    USER_DATA['deadlines'].append(data)
+    # Append points for the graph whenever a deadline is added
+    USER_DATA['performance'].append(USER_DATA['performance'][-1] + np.random.randint(-5, 10))
+    return jsonify({"status": "success"})
+
+@app.route('/get_plot')
+def get_plot():
+    """Generates a Matplotlib plot based on User's productivity points."""
+    plt.figure(figsize=(10, 4), facecolor='#0f0f0f')
+    ax = plt.axes()
+    ax.set_facecolor("#0f0f0f")
+    
+    data = np.array(USER_DATA['performance'])
+    x = np.arange(len(data))
+    
+    plt.plot(x, data, color='#3b82f6', linewidth=3, marker='o', markersize=6)
+    plt.fill_between(x, data, color='#3b82f6', alpha=0.1)
+    
+    plt.title("Development Productivity Index", color='white', fontsize=12, fontweight='bold', pad=20)
+    plt.tick_params(colors='#444', labelsize=8)
+    plt.grid(color='#1f1f1f', linestyle='--')
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return send_file(buf, mimetype='image/png')
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
