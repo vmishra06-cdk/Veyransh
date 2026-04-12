@@ -7,7 +7,7 @@ from sklearn.linear_model import LinearRegression
 import os
 
 app = Flask(__name__)
-
+ 
 # ==========================================
 # 1. CORE ARCHITECTURE (In-Memory Storage)
 # ==========================================
